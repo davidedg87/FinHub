@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "finance-data": {
+      "command": "C:\\Users\\davdigre\\Projects\\finance-dashboard\\.venv\\Scripts\\python.exe",
+      "args": ["mcp_server/server.py"]
+    }
+  }
+}
