@@ -70,6 +70,14 @@ def render_holdings_tab(category, help_ticker):
             st.rerun()
 
     if holdings:
+        edit_id = st.selectbox("Modifica note per id", [h["id"] for h in holdings], key=f"editnotes_{category}")
+        current = next((h["notes"] or "" for h in holdings if h["id"] == edit_id), "")
+        new_notes = st.text_input("Note", value=current, key=f"notes_input_{category}")
+        if st.button("Aggiorna note", key=f"btn_notes_{category}"):
+            db.update_holding(edit_id, notes=new_notes or None)
+            st.rerun()
+
+    if holdings:
         del_id = st.selectbox("Elimina posizione con id", [h["id"] for h in holdings], key=f"del_{category}")
         if st.button("Elimina", key=f"btn_del_{category}"):
             db.delete_holding(del_id)
