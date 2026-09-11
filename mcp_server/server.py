@@ -42,6 +42,13 @@ def update_holding_price(holding_id: int, price: float) -> str:
 
 
 @mcp.tool()
+def update_holding_notes(holding_id: int, notes: str | None) -> str:
+    """Aggiorna le note di una posizione esistente."""
+    db.update_holding(holding_id, notes=notes)
+    return "ok"
+
+
+@mcp.tool()
 def delete_holding(holding_id: int) -> str:
     """Rimuove una posizione dal portafoglio."""
     db.delete_holding(holding_id)
