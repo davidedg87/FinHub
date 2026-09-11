@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 @contextmanager
 def get_connection():
+    # row_factory=Row converte risultati in dict; commit automatico al termine (no explicit conn.commit)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -83,6 +84,7 @@ def list_holdings(category=None):
 
 
 def update_holding(holding_id, **fields):
+    # Generico: accetta qualunque campo. updated_at viene sempre aggiornato automaticamente (invariante)
     if not fields:
         return
     fields["updated_at"] = _now()
@@ -99,6 +101,7 @@ def delete_holding(holding_id):
 # --- liquidità ---
 
 def upsert_cash_account(name, balance):
+    # Upsert: INSERT if new, UPDATE if exists (via ON CONFLICT name UNIQUE constraint)
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO cash_accounts (name, balance, updated_at) VALUES (?, ?, ?)"
@@ -132,6 +135,7 @@ def list_transactions(limit=200):
 # --- riepilogo ---
 
 def portfolio_summary():
+    # Valuta il portafoglio: usa manual_price se set (es. BTP aggiornato), altrimenti avg_price storico
     holdings = list_holdings()
     cash = list_cash_accounts()
     invested_value = 0.0
