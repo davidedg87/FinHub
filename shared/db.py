@@ -62,6 +62,8 @@ def _now():
 # --- holdings (ETF / BTP / altri investimenti) ---
 
 def add_holding(category, name, ticker_or_isin, quantity, avg_price, manual_price=None, currency="EUR", notes=None):
+    # category: 'ETF', 'BTP', o 'ALTRO' (CHECK nel DB)
+    # avg_price: prezzo di carico (storico), manual_price: prezzo corrente aggiornabile (es. BTP)
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO holdings (category, name, ticker_or_isin, quantity, avg_price, manual_price, currency, notes, updated_at)"
