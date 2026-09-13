@@ -4,7 +4,25 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "portfolio.db"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+PROFILES_DIR = DATA_DIR / "profiles"
+ACTIVE_PROFILE_FILE = DATA_DIR / "active_profile.txt"
+DEFAULT_PROFILE = "default"
+_LEGACY_DB_PATH = DATA_DIR / "portfolio.db"
+
+
+def _resolve_active_profile_db() -> Path:
+    # Un file .db per profilo (nativo in SQLite: niente colonna profile_id da filtrare ovunque)
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    name = ACTIVE_PROFILE_FILE.read_text().strip() if ACTIVE_PROFILE_FILE.exists() else DEFAULT_PROFILE
+    path = PROFILES_DIR / f"{name}.db"
+    if name == DEFAULT_PROFILE and not path.exists() and _LEGACY_DB_PATH.exists():
+        # migrazione one-shot dal vecchio DB unico (pre-profili) al profilo "default"
+        _LEGACY_DB_PATH.rename(path)
+    return path
+
+
+DB_PATH = _resolve_active_profile_db()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS holdings (
@@ -54,6 +72,27 @@ def get_connection():
 def init_db():
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+
+
+# --- profili (un DB SQLite per profilo) ---
+
+def list_profiles() -> list[str]:
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    names = sorted(p.stem for p in PROFILES_DIR.glob("*.db"))
+    return names or [DEFAULT_PROFILE]
+
+
+def get_active_profile() -> str:
+    return DB_PATH.stem
+
+
+def set_active_profile(name: str):
+    # Crea il profilo se non esiste (nuovo file .db con schema inizializzato) o passa a uno esistente
+    global DB_PATH
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    DB_PATH = PROFILES_DIR / f"{name}.db"
+    ACTIVE_PROFILE_FILE.write_text(name)
+    init_db()
 
 
 def _now():

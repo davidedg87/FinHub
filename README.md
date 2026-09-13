@@ -27,6 +27,20 @@ pip install -r requirements.txt
 streamlit run dashboard/app.py
 ```
 
+## Inspector locale per MCP
+
+Se vuoi una UI in stile Inspector per testare i tool MCP del server Python del progetto:
+
+```
+streamlit run dashboard/mcp_inspector.py
+```
+
+La pagina mostra:
+- lista tool disponibili (letti dal modulo `mcp_server/server.py`)
+- firma e descrizione del tool
+- invocazione con payload JSON
+- risultato e storico chiamate
+
 ## Registrare il server MCP in Claude Code
 
 Il file `.mcp.json` nella root registra già il server per Claude Code, che lo avvia
