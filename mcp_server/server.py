@@ -15,6 +15,25 @@ mcp = MCPServer("finance-data")
 
 
 @mcp.tool()
+def list_profiles() -> list[str]:
+    """Elenca i profili esistenti (ognuno con il proprio portafoglio separato)."""
+    return db.list_profiles()
+
+
+@mcp.tool()
+def get_active_profile() -> str:
+    """Ritorna il nome del profilo attualmente attivo."""
+    return db.get_active_profile()
+
+
+@mcp.tool()
+def set_active_profile(name: str) -> str:
+    """Passa al profilo indicato (lo crea vuoto se non esiste). Le operazioni successive agiscono sul suo portafoglio."""
+    db.set_active_profile(name)
+    return f"profilo attivo: {name}"
+
+
+@mcp.tool()
 def list_holdings(category: str | None = None) -> list[dict]:
     """Elenca le posizioni in portafoglio (ETF, BTP, ALTRO). Filtra per categoria se indicata."""
     return db.list_holdings(category)
@@ -25,12 +44,20 @@ def add_holding(
     category: str,
     name: str,
     quantity: float,
-    avg_price: float,
+    avg_price: float | None = None,
     ticker_or_isin: str | None = None,
     currency: str = "EUR",
     notes: str | None = None,
 ) -> int:
-    """Aggiunge una posizione. category deve essere 'ETF', 'BTP' o 'ALTRO'. Ritorna l'id creato."""
+    """Aggiunge una posizione. category deve essere 'ETF', 'BTP' o 'ALTRO'.
+    Se avg_price non è fornito ma il ticker è presente, recupera il prezzo corrente da yfinance."""
+    if avg_price is None:
+        if not ticker_or_isin:
+            raise ValueError("Devi fornire avg_price oppure un ticker valido.")
+        price = quotes.get_etf_quote(ticker_or_isin)
+        if price is None:
+            raise ValueError(f"Impossibile recuperare il prezzo per {ticker_or_isin}. Specifica avg_price manualmente.")
+        avg_price = price
     return db.add_holding(category, name, ticker_or_isin, quantity, avg_price, currency=currency, notes=notes)
 
 

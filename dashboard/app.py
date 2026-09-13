@@ -17,7 +17,22 @@ from shared import db, quotes
 
 db.init_db()
 st.set_page_config(page_title="Le mie finanze", layout="wide")
+
+with st.sidebar:
+    st.subheader("Profilo")
+    profiles = db.list_profiles()
+    active = db.get_active_profile()
+    selected = st.selectbox("Profilo attivo", profiles, index=profiles.index(active))
+    if selected != active:
+        db.set_active_profile(selected)
+        st.rerun()
+    new_profile = st.text_input("Nuovo profilo", value="", placeholder="es. coniuge")
+    if st.button("Crea profilo") and new_profile:
+        db.set_active_profile(new_profile)
+        st.rerun()
+
 st.title("Dashboard finanze personali")
+st.caption(f"Profilo: {db.get_active_profile()}")
 
 summary = db.portfolio_summary()
 c1, c2, c3 = st.columns(3)
