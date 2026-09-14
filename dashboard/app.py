@@ -3,6 +3,7 @@ SQLite del MCP server: i due non si parlano direttamente, condividono solo il DB
 Avvio: streamlit run dashboard/app.py
 """
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from shared import db, quotes
+from shared import db, importers, quotes
 
 db.init_db()
 st.set_page_config(page_title="Le mie finanze", layout="wide")
@@ -46,7 +47,9 @@ if summary["by_category"]:
     ax.set_title("Allocazione per categoria")
     st.pyplot(fig)
 
-tab_etf, tab_btp, tab_altro, tab_cash, tab_mov = st.tabs(["ETF", "BTP", "Altri investimenti", "Liquidità", "Spese/Entrate"])
+tab_etf, tab_btp, tab_altro, tab_cash, tab_mov, tab_import = st.tabs(
+    ["ETF", "BTP", "Altri investimenti", "Liquidità", "Spese/Entrate", "Import"]
+)
 
 
 def render_holdings_tab(category, help_ticker):
@@ -135,3 +138,41 @@ with tab_mov:
         if st.form_submit_button("Salva") and tx_category:
             db.add_transaction(tx_date.isoformat(), tx_type, tx_category, amount, description or None)
             st.rerun()
+
+with tab_import:
+    # L'import vive SOLO qui e non fra i tool MCP, ed e una scelta di sicurezza: db.DB_PATH e
+    # un global risolto all'import del modulo, e il server MCP e un altro processo che non si
+    # accorge del cambio profilo fatto qui. Sbagliare profilo con una spesa singola e un
+    # fastidio; con un estratto da 400 righe no. Questo tab gira nello stesso processo che ha
+    # appena impostato il profilo.
+    st.subheader("Importa movimenti da file")
+    st.caption(
+        f"Profilo attivo: **{db.get_active_profile()}** — reimportare lo stesso file non "
+        "duplica niente, quindi si puo rilanciare senza paura."
+    )
+    uploaded = st.file_uploader("Estratto conto (CSV)", type=["csv"])
+    col_fmt, col_conto = st.columns(2)
+    fmt = col_fmt.selectbox("Formato", importers.formati())
+    conto = col_conto.text_input("Conto di destinazione", placeholder="es. Conto ING")
+
+    if st.button("Importa", disabled=not (uploaded and conto)):
+        # _header_row e simili leggono il file per path: il buffer di st.file_uploader va
+        # materializzato su disco prima di passarlo ai parser.
+        tmp = Path(tempfile.mkdtemp()) / uploaded.name
+        tmp.write_bytes(uploaded.getbuffer())
+        try:
+            report = importers.import_file(tmp, fmt, conto.strip())
+        except Exception as e:
+            st.error(f"Import fallito: {e}")
+        else:
+            st.success(
+                f"Profilo **{report['profilo']}** · conto **{conto.strip()}** — "
+                f"{report['inserite']} inserite, {report['duplicate']} gia presenti, "
+                f"{len(report['scartate'])} scartate"
+            )
+            if report["scartate"]:
+                st.warning("Righe non importate:")
+                st.dataframe(
+                    pd.DataFrame([{**s["riga"], "motivo": s["motivo"]} for s in report["scartate"]]),
+                    use_container_width=True,
+                )

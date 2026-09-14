@@ -182,6 +182,17 @@ def list_cash_accounts():
         return [dict(r) for r in conn.execute("SELECT * FROM cash_accounts ORDER BY name").fetchall()]
 
 
+def get_or_create_cash_account(name) -> int:
+    # Volutamente NON upsert_cash_account: quella riscrive il saldo, e un import di
+    # movimenti non sa nulla del saldo. Qui serve solo l'id del conto.
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO cash_accounts (name, balance, updated_at) VALUES (?, 0, ?)",
+            (name, _now()),
+        )
+        return conn.execute("SELECT id FROM cash_accounts WHERE name = ?", (name,)).fetchone()[0]
+
+
 # --- spese/entrate ---
 
 def add_transaction(date, type_, category, amount, description=None):
@@ -212,6 +223,26 @@ def update_transaction(transaction_id, **fields):
 def delete_transaction(transaction_id):
     with get_connection() as conn:
         conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+
+
+def add_imported_transactions(rows) -> tuple[int, int]:
+    """rows: tuple (date, type, category, amount, description, account_id, dedup_key).
+    INSERT OR IGNORE sull'indice unique di dedup_key: reimportare lo stesso estratto non
+    duplica niente. Ritorna (inserite, saltate-perche-gia-presenti)."""
+    if not rows:
+        return 0, 0
+    with get_connection() as conn:
+        prima = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO transactions"
+            " (date, type, category, amount, description, account_id, dedup_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        # total_changes e non cursor.rowcount: su executemany con OR IGNORE rowcount non e
+        # affidabile. Il differenziale conta anche i duplicati interni al batch, che e giusto.
+        inserite = conn.total_changes - prima
+    return inserite, len(rows) - inserite
 
 
 # --- riepilogo ---
