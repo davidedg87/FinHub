@@ -1,10 +1,13 @@
-# Finance Dashboard
+# FinHub
 
-Progetto personale per monitorare ETF, BTP, liquidità e spese/entrate.
+Accentratore personale di finanza: ETF, BTP, liquidità e movimenti di più fonti
+(conto corrente, conto titoli, titoli di stato) in un'unica vista.
 
 ## Struttura
 
-- `shared/db.py` — schema SQLite e CRUD, unica fonte di verità (`data/portfolio.db`).
+- `shared/db.py` — schema SQLite e CRUD, unica fonte di verità.
+  Un database per profilo: `data/profiles/<profilo>.db`, con il profilo attivo in
+  `data/active_profile.txt`.
 - `shared/quotes.py` — fetch quotazioni ETF live (yfinance). I BTP si aggiornano a mano.
 - `mcp_server/server.py` — server MCP: espone il portafoglio a Claude come tool
   (aggiungi/leggi posizioni, aggiorna prezzi, riepilogo patrimonio).
@@ -54,8 +57,13 @@ Poi in chat puoi chiedere ad esempio:
 
 ## Test
 
+Script con `assert`, senza framework. Lo hook di pre-commit li esegue tutti prima di
+ogni `git commit`.
+
 ```
 python tests/test_db.py
+python tests/test_profiles.py
+python tests/test_server.py
 ```
 
 ## Limiti noti

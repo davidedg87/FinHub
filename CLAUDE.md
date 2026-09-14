@@ -24,13 +24,16 @@ streamlit run dashboard/mcp_inspector.py
 **Run tests:**
 ```
 python tests/test_db.py
+python tests/test_profiles.py
+python tests/test_server.py
 ```
+The pre-commit hook (`.claude/hooks/pre-commit-tests.sh`) runs all of them before every `git commit`.
 
 The MCP server auto-starts when Claude Code opens this folder (configured in `.mcp.json`).
 
 ## Architecture
 
-Personal finance tracker with two independent frontends sharing a single SQLite database.
+FinHub: personal finance aggregator with two independent frontends sharing a single SQLite database.
 
 ### Layer 1: Shared Data Layer (`shared/`)
 - **`db.py`**: SQLite schema (holdings, cash_accounts, transactions) and CRUD functions. Single source of truth.
@@ -39,11 +42,12 @@ Personal finance tracker with two independent frontends sharing a single SQLite 
 ### Layer 2: MCP Server (`mcp_server/server.py`)
 Exposes portfolio operations as MCP tools for Claude via the Model Context Protocol. No state—always reads/writes the shared database.
 
-**Tools exposed:**
-- `list_holdings()`, `add_holding()`, `update_holding_price()`, `delete_holding()`
+**Tools exposed (14):**
+- `list_holdings()`, `add_holding()`, `update_holding_price()`, `update_holding_notes()`, `delete_holding()`
 - `list_cash_accounts()`, `set_cash_balance()`
 - `add_transaction()`, `list_transactions()`
 - `refresh_etf_quote()`, `portfolio_summary()`
+- `list_profiles()`, `get_active_profile()`, `set_active_profile()`
 
 ### Layer 3: Streamlit Dashboard (`dashboard/app.py`)
 Web UI for viewing portfolio, updating prices, and adding transactions manually. Reads/writes the same SQLite database.
@@ -52,7 +56,14 @@ The two frontends do **not** communicate with each other—they only share the d
 
 ## Database
 
-SQLite file at `data/portfolio.db`. Three tables:
+**One SQLite file per profile**: `data/profiles/<profile>.db`. The active profile name lives in
+`data/active_profile.txt`; isolation is at the file level, so there is no `profile_id` column to
+filter on. `data/portfolio.db` is the pre-profiles legacy path, migrated once to `default.db`.
+
+Careful: `db.DB_PATH` is a module global resolved at import time. The MCP server and Streamlit are
+separate processes and do **not** see each other's profile switch until restarted.
+
+Three tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -76,7 +87,14 @@ def my_new_tool(param: str) -> result_type:
 
 ## Test
 
-`test_db.py` is the single self-check: sets up a temp DB, exercises the schema and core logic (holdings CRUD, portfolio summary, transactions), clears, and verifies. No fixtures or frameworks. Run it before pushing changes to `shared/db.py`.
+Three self-checks, no fixtures and no framework: plain scripts with top-level `assert` that monkeypatch
+`db.DB_PATH` onto a temp dir and print `OK`. Keep new tests in that style.
+
+- `test_db.py` — schema and core logic (holdings CRUD, portfolio summary, transactions).
+- `test_profiles.py` — profile isolation (two profiles never see each other's data).
+- `test_server.py` — the only MCP-layer logic worth testing: `add_holding`'s automatic price fetch.
+
+Run them before pushing changes to `shared/db.py`.
 
 ## Project-Specific Rules
 

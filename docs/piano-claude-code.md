@@ -1,7 +1,7 @@
 # Piano pratico Claude Code — palestra: questo repo
 
 Obiettivo: mettere in pratica Claude Code 101 e Claude Code in Action usando
-`finance-dashboard` come terreno di esercizio, un passo alla volta. Ogni
+`FinHub` come terreno di esercizio, un passo alla volta. Ogni
 punto ha una guida su come portarlo a termine.
 
 ## Checklist di avanzamento
@@ -18,8 +18,8 @@ punto ha una guida su come portarlo a termine.
 |---|--------------------------------|--------|
 | 6 | MCP in pratica | ❌ |
 | 7 | Subagent | ❌ |
-| 8 | Hook | ❌ |
-| 9 | Skill di progetto | ❌ |
+| 8 | Hook | ✅ |
+| 9 | Skill di progetto | ✅ |
 | 10 | Automazione headless | ❌ |
 | 11 | Code review | ❌ |
 
@@ -76,7 +76,7 @@ punto ha una guida su come portarlo a termine.
 - Osserva la sequenza: `git checkout -b`, edit, `git add`, `git commit`,
   `gh pr create`. Guarda soprattutto se ti chiede conferma prima del push e
   della creazione della PR (azioni visibili all'esterno).
-- Poi vai su `https://github.com/davidedg87/finance-dashboard/pulls` e
+- Poi vai su `https://github.com/davidedg87/FinHub/pulls` e
   guarda la PR generata.
 
 ### 5. Memoria persistente

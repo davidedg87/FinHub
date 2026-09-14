@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "finance-data": {
-      "command": "C:\\Users\\davdigre\\Projects\\finance-dashboard\\.venv\\Scripts\\python.exe",
-      "args": ["mcp_server/server.py"]
+      "command": "C:\\NO_BACKUP\\Projects\\FinHub\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\NO_BACKUP\\Projects\\FinHub\\mcp_server\\server.py"
+      ]
     }
   }
 }
