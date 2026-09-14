@@ -89,11 +89,13 @@ def refresh_etf_quote(holding_id: int) -> str:
     holding = holdings.get(holding_id)
     if not holding or not holding["ticker_or_isin"]:
         return "holding non trovato o senza ticker"
-    price = quotes.get_etf_quote(holding["ticker_or_isin"])
-    if price is None:
-        return "quotazione non disponibile"
-    db.update_holding(holding_id, manual_price=price)
-    return f"prezzo aggiornato: {price}"
+    esito = quotes.get_quote(holding["ticker_or_isin"])
+    if esito["price"] is None:
+        return f"quotazione non disponibile: {esito['error']}"
+    # market_price e non manual_price: quest'ultima e quello che l'utente afferma a mano
+    # (i BTP) e un refresh non deve sovrascriverlo.
+    db.update_holding(holding_id, market_price=esito["price"], market_price_at=esito["as_of"])
+    return f"prezzo aggiornato: {esito['price']} ({esito['source']}, {esito['as_of']})"
 
 
 @mcp.tool()

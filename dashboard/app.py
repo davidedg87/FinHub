@@ -56,7 +56,7 @@ def render_holdings_tab(category, help_ticker):
     holdings = db.list_holdings(category)
     if holdings:
         df = pd.DataFrame(holdings)
-        df["prezzo_corrente"] = df["manual_price"].fillna(df["avg_price"])
+        df["prezzo_corrente"] = [db.prezzo_corrente(h) for h in holdings]
         df["valore"] = df["prezzo_corrente"] * df["quantity"]
         st.dataframe(
             df[["id", "name", "ticker_or_isin", "quantity", "avg_price", "prezzo_corrente", "valore", "notes"]],
@@ -66,13 +66,15 @@ def render_holdings_tab(category, help_ticker):
             refresh_id = st.selectbox("Aggiorna quotazione per id", [h["id"] for h in holdings], key=f"refresh_{category}")
             if st.button("Vai a prendere il prezzo live", key=f"btn_refresh_{category}"):
                 h = next(x for x in holdings if x["id"] == refresh_id)
-                price = quotes.get_etf_quote(h["ticker_or_isin"]) if h["ticker_or_isin"] else None
-                if price is not None:
-                    db.update_holding(refresh_id, manual_price=price)
-                    st.success(f"Prezzo aggiornato: {price}")
+                esito = quotes.get_quote(h["ticker_or_isin"]) if h["ticker_or_isin"] else {"price": None, "error": "nessun ticker"}
+                if esito["price"] is not None:
+                    # market_price, non manual_price: un refresh non deve cancellare un
+                    # prezzo che l'utente ha dichiarato a mano
+                    db.update_holding(refresh_id, market_price=esito["price"], market_price_at=esito["as_of"])
+                    st.success(f"Prezzo aggiornato: {esito['price']} ({esito['source']})")
                     st.rerun()
                 else:
-                    st.error("Quotazione non disponibile per questo ticker")
+                    st.error(f"Quotazione non disponibile: {esito['error']}")
     else:
         st.info("Nessuna posizione registrata.")
 

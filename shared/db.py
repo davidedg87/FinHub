@@ -1,10 +1,14 @@
 """Schema e CRUD SQLite. Unica fonte di verità, condivisa da mcp_server e dashboard."""
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# FINHUB_DATA_DIR sposta tutti i dati altrove. Serve per puntare un processo separato
+# (il server MCP, avviato da un client) a una cartella di prova: monkeypatchare
+# db.DATA_DIR vale solo dentro il processo che lo fa.
+DATA_DIR = Path(os.environ.get("FINHUB_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
 PROFILES_DIR = DATA_DIR / "profiles"
 ACTIVE_PROFILE_FILE = DATA_DIR / "active_profile.txt"
 DEFAULT_PROFILE = "default"
@@ -82,6 +86,14 @@ MIGRATIONS = [
         # In SQLite due NULL non collidono in un indice unique, quindi le righe inserite
         # a mano (dedup_key NULL) restano duplicabili - che e il comportamento giusto.
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(dedup_key)",
+    ],
+    # v2: separa il prezzo di mercato dall'override manuale. Finora refresh_etf_quote
+    # scriveva la quotazione live dentro manual_price, cioe nella stessa colonna in cui
+    # l'utente mette a mano il prezzo dei BTP: un refresh sovrascriveva senza avviso un
+    # valore dichiarato a mano, e non c'era modo di sapere ne la fonte ne la data.
+    [
+        "ALTER TABLE holdings ADD COLUMN market_price REAL",
+        "ALTER TABLE holdings ADD COLUMN market_price_at TEXT",
     ],
 ]
 
@@ -245,10 +257,25 @@ def add_imported_transactions(rows) -> tuple[int, int]:
     return inserite, len(rows) - inserite
 
 
+# --- prezzi ---
+
+def prezzo_corrente(holding) -> float:
+    """Prezzo da usare per valutare una posizione, in ordine di autorita:
+    manual_price (l'utente lo afferma) > market_price (l'ultima quotazione) > avg_price (il carico).
+
+    Unico posto dove vive questa regola: la usano portfolio_summary, la dashboard e market-data.
+    """
+    for campo in ("manual_price", "market_price", "avg_price"):
+        if holding.get(campo) is not None:
+            return holding[campo]
+    return 0.0
+
+
 # --- riepilogo ---
 
 def portfolio_summary():
-    # Valuta il portafoglio: usa manual_price se set (es. BTP aggiornato), altrimenti avg_price storico.
+    # Valuta il portafoglio con prezzo_corrente(): manual_price (quello che dichiara l'utente)
+    # vince su market_price (quello che dice il mercato), che vince su avg_price (il carico).
     # transactions NON entra qui di proposito: cash_accounts.balance e la fotografia che arriva
     # dall'estratto e transactions e il registro che arriva dallo stesso estratto. Sommarli
     # significherebbe contare due volte gli stessi soldi.
@@ -257,8 +284,7 @@ def portfolio_summary():
     invested_value = 0.0
     by_category = {}
     for h in holdings:
-        price = h["manual_price"] if h["manual_price"] is not None else h["avg_price"]
-        value = price * h["quantity"]
+        value = prezzo_corrente(h) * h["quantity"]
         invested_value += value
         by_category[h["category"]] = by_category.get(h["category"], 0.0) + value
     cash_total = sum(c["balance"] for c in cash)

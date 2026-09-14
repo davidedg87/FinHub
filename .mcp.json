@@ -5,6 +5,12 @@
       "args": [
         "C:\\NO_BACKUP\\Projects\\FinHub\\mcp_server\\server.py"
       ]
+    },
+    "market-data": {
+      "command": "C:\\NO_BACKUP\\Projects\\FinHub\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\NO_BACKUP\\Projects\\FinHub\\mcp_server\\market_data.py"
+      ]
     }
   }
 }

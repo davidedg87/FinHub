@@ -14,21 +14,27 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from mcp_server import market_data as mcp_market  # noqa: E402
 from mcp_server import server as mcp_server  # noqa: E402
+
+# I due server del progetto: finance-data (il portafoglio) e market-data (il mercato).
+MODULI = {"finance-data": mcp_server, "market-data": mcp_market}
 
 
 def _discover_tools() -> dict[str, dict[str, str]]:
+    """Introspezione dei moduli, non del protocollo: qui si testano i corpi delle funzioni.
+    Il round-trip MCP vero (stdio, schemi, serializzazione) e in tests/test_market_data.py."""
     tools: dict[str, dict[str, str]] = {}
-    for name, fn in inspect.getmembers(mcp_server, inspect.isfunction):
-        if fn.__module__ != "mcp_server.server":
-            continue
-        if name.startswith("_"):
-            continue
-
-        tools[name] = {
-            "signature": str(inspect.signature(fn)),
-            "doc": inspect.getdoc(fn) or "Nessuna descrizione disponibile.",
-        }
+    for server_name, modulo in MODULI.items():
+        for name, fn in inspect.getmembers(modulo, inspect.isfunction):
+            if fn.__module__ != modulo.__name__ or name.startswith("_"):
+                continue
+            tools[f"{server_name}.{name}"] = {
+                "modulo": modulo,
+                "funzione": name,
+                "signature": str(inspect.signature(fn)),
+                "doc": inspect.getdoc(fn) or "Nessuna descrizione disponibile.",
+            }
 
     return tools
 
@@ -42,7 +48,8 @@ def _invoke_tool(tool_name: str, payload: str) -> tuple[bool, object]:
     if not isinstance(args, dict):
         return False, "Il payload deve essere un oggetto JSON (chiave/valore)."
 
-    fn = getattr(mcp_server, tool_name, None)
+    info = _discover_tools().get(tool_name)
+    fn = getattr(info["modulo"], info["funzione"], None) if info else None
     if fn is None or not callable(fn):
         return False, f"Tool non trovato: {tool_name}"
 
@@ -88,7 +95,7 @@ def _render_header() -> None:
         """
         <div class="hero">
           <h2 style="margin:0 0 0.35rem 0;">MCP Inspector Locale</h2>
-          <div style="margin:0;">Interfaccia per esplorare e testare i tool del server <span class="mono">mcp_server/server.py</span>.</div>
+          <div style="margin:0;">Interfaccia per esplorare e testare i tool dei server <span class="mono">finance-data</span> e <span class="mono">market-data</span>.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -178,7 +185,7 @@ def main() -> None:
     _render_header()
     tools = _discover_tools()
     if not tools:
-        st.error("Nessun tool rilevato in mcp_server.server")
+        st.error("Nessun tool rilevato nei moduli mcp_server")
         return
 
     _render_tool_panel(tools)
