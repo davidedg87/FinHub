@@ -4,3 +4,4 @@ __pycache__/
 data/*.db
 data/active_profile.txt
 data/profiles/*.db
+.claude/settings.local.json

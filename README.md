@@ -1,14 +1,23 @@
-# Finance Dashboard
+# FinHub
 
-Progetto personale per monitorare ETF, BTP, liquidità e spese/entrate.
+Accentratore personale di finanza: ETF, BTP, liquidità e movimenti di più fonti
+(conto corrente, conto titoli, titoli di stato) in un'unica vista.
 
 ## Struttura
 
-- `shared/db.py` — schema SQLite e CRUD, unica fonte di verità (`data/portfolio.db`).
-- `shared/quotes.py` — fetch quotazioni ETF live (yfinance). I BTP si aggiornano a mano.
-- `mcp_server/server.py` — server MCP: espone il portafoglio a Claude come tool
-  (aggiungi/leggi posizioni, aggiorna prezzi, riepilogo patrimonio).
-- `dashboard/app.py` — dashboard Streamlit: visualizzazione e inserimento manuale.
+- `shared/db.py` — schema SQLite e CRUD, unica fonte di verità.
+  Un database per profilo: `data/profiles/<profilo>.db`, con il profilo attivo in
+  `data/active_profile.txt`.
+- `shared/quotes.py` — quotazioni da due fonti: ticker (SWDA.MI) via yfinance, ISIN
+  (IT0005441883) dal prezzo ufficiale MOT di Borsa Italiana.
+- `shared/importers.py` — import di movimenti da file, idempotente: lo stesso estratto
+  reimportato non duplica niente.
+- `mcp_server/server.py` — server MCP `finance-data`: il portafoglio (posizioni, conti,
+  movimenti, riepilogo).
+- `mcp_server/market_data.py` — server MCP `market-data`: le quotazioni, piu la resource
+  `market://symbols` con prezzo in uso, fonte e data per ogni posizione.
+- `dashboard/app.py` — dashboard Streamlit: visualizzazione, import da file e
+  inserimento manuale.
 
 I due frontend (Claude via MCP, e Streamlit) non comunicano tra loro: condividono solo
 lo stesso file SQLite.
@@ -54,12 +63,22 @@ Poi in chat puoi chiedere ad esempio:
 
 ## Test
 
+Script con `assert`, senza framework. Lo hook di pre-commit li esegue tutti prima di
+ogni `git commit`.
+
 ```
 python tests/test_db.py
+python tests/test_migrations.py
+python tests/test_import.py
+python tests/test_profiles.py
+python tests/test_server.py
+python tests/test_market_data.py
 ```
 
 ## Limiti noti
 
-- BTP: nessuna fonte gratuita affidabile per il fetch automatico, prezzo manuale via
-  `update_holding_price` (MCP) o dalla dashboard.
+- BTP: il prezzo arriva dallo scraping della scheda MOT di Borsa Italiana. Se cambiano il
+  layout della pagina, `get_quote` lo dice invece di restituire un numero sbagliato.
+- Import: per ora il solo formato `generico` (data, importo, descrizione). I parser di
+  ING, Directa e Unicredit vanno scritti su un export vero.
 - Nessuna autenticazione: pensato per uso locale personale, non per essere esposto in rete.

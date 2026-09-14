@@ -1,5 +1,8 @@
-streamlit
-pandas
-matplotlib
-yfinance
-mcp
+# mcp e pinnato stretto: fra la 1.x e la 2.x FastMCP e stato rinominato MCPServer,
+# e mcp/server/fastmcp.py e ora solo uno shim che solleva. Un aggiornamento cieco
+# rompe entrambi i server.
+mcp==2.2.0
+streamlit>=1.63,<2
+pandas>=3.0,<4
+matplotlib>=3.11,<4
+yfinance>=1.7,<2

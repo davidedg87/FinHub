@@ -24,41 +24,72 @@ streamlit run dashboard/mcp_inspector.py
 **Run tests:**
 ```
 python tests/test_db.py
+python tests/test_profiles.py
+python tests/test_server.py
 ```
+The pre-commit hook (`.claude/hooks/pre-commit-tests.sh`) runs all of them before every `git commit`.
 
 The MCP server auto-starts when Claude Code opens this folder (configured in `.mcp.json`).
 
 ## Architecture
 
-Personal finance tracker with two independent frontends sharing a single SQLite database.
+FinHub: personal finance aggregator with two independent frontends sharing a single SQLite database.
 
 ### Layer 1: Shared Data Layer (`shared/`)
 - **`db.py`**: SQLite schema (holdings, cash_accounts, transactions) and CRUD functions. Single source of truth.
-- **`quotes.py`**: Live quote fetching (yfinance for ETF tickers like SWDA.MI). BTP prices are manual.
+  `prezzo_corrente(holding)` holds the price precedence rule in one place: `manual_price` > `market_price` > `avg_price`.
+- **`quotes.py`**: quotes from two sources, picked by symbol shape — ticker (SWDA.MI) via yfinance, ISIN (IT0005441883)
+  from the Borsa Italiana MOT page. `get_quote()` returns `{price, source, as_of, error}` so a bad symbol and an
+  unreachable network stay distinguishable.
+- **`importers.py`**: one parser per file format, each returning `[{date ISO, amount signed, description}]`.
+  `import_file()` is idempotent — re-importing the same statement inserts nothing.
 
-### Layer 2: MCP Server (`mcp_server/server.py`)
-Exposes portfolio operations as MCP tools for Claude via the Model Context Protocol. No state—always reads/writes the shared database.
+### Layer 2: MCP Servers (`mcp_server/`)
+Two servers, two domains. `server.py` (**finance-data**) exposes the portfolio — the user's state.
+`market_data.py` (**market-data**) exposes the market — the world's state, plus the resource `market://symbols`.
+Neither holds state: they always read/write the shared database.
 
-**Tools exposed:**
-- `list_holdings()`, `add_holding()`, `update_holding_price()`, `delete_holding()`
+**finance-data tools (18):**
+- `list_holdings()`, `add_holding()`, `update_holding_price()`, `update_holding_notes()`, `delete_holding()`
 - `list_cash_accounts()`, `set_cash_balance()`
-- `add_transaction()`, `list_transactions()`
+- `add_transaction()`, `list_transactions()`, `update_transaction()`, `delete_transaction()`
+- `list_import_formats()`, `import_transactions_file()` — the latter takes `profilo` as a **required** argument
 - `refresh_etf_quote()`, `portfolio_summary()`
+- `list_profiles()`, `get_active_profile()`, `set_active_profile()`
+
+**market-data tools:** `get_quote()`, `refresh_all_quotes()` · **resource:** `market://symbols`
 
 ### Layer 3: Streamlit Dashboard (`dashboard/app.py`)
-Web UI for viewing portfolio, updating prices, and adding transactions manually. Reads/writes the same SQLite database.
+Web UI for viewing the portfolio, updating prices, importing statements, and adding transactions manually.
+
+**File import lives here and NOT in the MCP tools, on purpose.** `db.DB_PATH` is a module global resolved at
+import time, and the MCP server is a separate process that does not see a profile switch made in the dashboard.
+Getting the profile wrong costs one row when typing a single expense; it costs a 400-row statement on import.
 
 The two frontends do **not** communicate with each other—they only share the database file. This keeps them independent: no API coupling, no state synchronization.
 
 ## Database
 
-SQLite file at `data/portfolio.db`. Three tables:
+**One SQLite file per profile**: `data/profiles/<profile>.db`. The active profile name lives in
+`data/active_profile.txt`; isolation is at the file level, so there is no `profile_id` column to
+filter on. `data/portfolio.db` is the pre-profiles legacy path, migrated once to `default.db`.
+
+Careful: `db.DB_PATH` is a module global resolved at import time. The MCP server and Streamlit are
+separate processes and do **not** see each other's profile switch until restarted.
+
+Three tables:
 
 | Table | Purpose |
 |-------|---------|
 | `holdings` | ETF, BTP, and other investments: quantity, prices (avg and current manual), ticker/ISIN, notes |
 | `cash_accounts` | Named accounts with balances (checking, savings, etc.) |
-| `transactions` | Income and expense records with date, category, amount |
+| `transactions` | Income and expense records with date, category, amount, `account_id`, `dedup_key` |
+
+**Schema changes go in `MIGRATIONS` in `db.py`, never by editing `SCHEMA`** — `SCHEMA` is frozen at the v0 shape,
+and `PRAGMA user_version` tracks how far a file has come, so fresh and existing databases walk the same path.
+
+`FINHUB_DATA_DIR` moves the whole data directory elsewhere — the way to point a separate process (an MCP server
+launched by a client) at a test fixture, since monkeypatching `db.DATA_DIR` only affects the process that does it.
 
 ## When to Add Code
 
@@ -76,7 +107,18 @@ def my_new_tool(param: str) -> result_type:
 
 ## Test
 
-`test_db.py` is the single self-check: sets up a temp DB, exercises the schema and core logic (holdings CRUD, portfolio summary, transactions), clears, and verifies. No fixtures or frameworks. Run it before pushing changes to `shared/db.py`.
+Three self-checks, no fixtures and no framework: plain scripts with top-level `assert` that monkeypatch
+`db.DB_PATH` onto a temp dir and print `OK`. Keep new tests in that style.
+
+- `test_db.py` — schema and core logic (holdings CRUD, portfolio summary, transactions).
+- `test_profiles.py` — profile isolation (two profiles never see each other's data).
+- `test_server.py` — the only MCP-layer logic worth testing: `add_holding`'s automatic price fetch.
+- `test_migrations.py` — the migration is idempotent, rolls back whole on failure, and NULL `dedup_key`s don't collide.
+- `test_import.py` — re-importing a file inserts nothing, but two genuinely identical rows stay two rows.
+- `test_market_data.py` — the only test that speaks MCP: real stdio handshake, `list_tools`, `read_resource`.
+  `mcp_inspector.py` calls the Python functions in-process, so it covers neither transport nor schemas.
+
+Run them before pushing changes to `shared/db.py`.
 
 ## Project-Specific Rules
 
@@ -84,7 +126,9 @@ def my_new_tool(param: str) -> result_type:
 
 - **Database schema changes only via `shared/db.py`** — Never write direct SQL or schema modifications elsewhere. All CRUD goes through the functions in `db.py`.
 - **Git user is `davidedg87`** — Commits in this repo always use the personal git user `davidedg87`, never the corporate user.
-- **BTP prices are manual** — Treasury bond prices have no automated fetch. Update them via the `update_holding_price` MCP tool or the Streamlit dashboard UI only.
+- **`manual_price` is the user's word, `market_price` is the market's** — a quote refresh writes `market_price`
+  and must never overwrite `manual_price`. BTP prices can now be fetched from the MOT via `market-data`, but a
+  hand-entered price still wins.
 
 ## Notes
 

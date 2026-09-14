@@ -3,6 +3,7 @@ SQLite del MCP server: i due non si parlano direttamente, condividono solo il DB
 Avvio: streamlit run dashboard/app.py
 """
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from shared import db, quotes
+from shared import db, importers, quotes
 
 db.init_db()
 st.set_page_config(page_title="Le mie finanze", layout="wide")
@@ -46,14 +47,16 @@ if summary["by_category"]:
     ax.set_title("Allocazione per categoria")
     st.pyplot(fig)
 
-tab_etf, tab_btp, tab_altro, tab_cash, tab_mov = st.tabs(["ETF", "BTP", "Altri investimenti", "Liquidità", "Spese/Entrate"])
+tab_etf, tab_btp, tab_altro, tab_cash, tab_mov, tab_import = st.tabs(
+    ["ETF", "BTP", "Altri investimenti", "Liquidità", "Spese/Entrate", "Import"]
+)
 
 
 def render_holdings_tab(category, help_ticker):
     holdings = db.list_holdings(category)
     if holdings:
         df = pd.DataFrame(holdings)
-        df["prezzo_corrente"] = df["manual_price"].fillna(df["avg_price"])
+        df["prezzo_corrente"] = [db.prezzo_corrente(h) for h in holdings]
         df["valore"] = df["prezzo_corrente"] * df["quantity"]
         st.dataframe(
             df[["id", "name", "ticker_or_isin", "quantity", "avg_price", "prezzo_corrente", "valore", "notes"]],
@@ -63,13 +66,15 @@ def render_holdings_tab(category, help_ticker):
             refresh_id = st.selectbox("Aggiorna quotazione per id", [h["id"] for h in holdings], key=f"refresh_{category}")
             if st.button("Vai a prendere il prezzo live", key=f"btn_refresh_{category}"):
                 h = next(x for x in holdings if x["id"] == refresh_id)
-                price = quotes.get_etf_quote(h["ticker_or_isin"]) if h["ticker_or_isin"] else None
-                if price is not None:
-                    db.update_holding(refresh_id, manual_price=price)
-                    st.success(f"Prezzo aggiornato: {price}")
+                esito = quotes.get_quote(h["ticker_or_isin"]) if h["ticker_or_isin"] else {"price": None, "error": "nessun ticker"}
+                if esito["price"] is not None:
+                    # market_price, non manual_price: un refresh non deve cancellare un
+                    # prezzo che l'utente ha dichiarato a mano
+                    db.update_holding(refresh_id, market_price=esito["price"], market_price_at=esito["as_of"])
+                    st.success(f"Prezzo aggiornato: {esito['price']} ({esito['source']})")
                     st.rerun()
                 else:
-                    st.error("Quotazione non disponibile per questo ticker")
+                    st.error(f"Quotazione non disponibile: {esito['error']}")
     else:
         st.info("Nessuna posizione registrata.")
 
@@ -135,3 +140,41 @@ with tab_mov:
         if st.form_submit_button("Salva") and tx_category:
             db.add_transaction(tx_date.isoformat(), tx_type, tx_category, amount, description or None)
             st.rerun()
+
+with tab_import:
+    # L'import vive SOLO qui e non fra i tool MCP, ed e una scelta di sicurezza: db.DB_PATH e
+    # un global risolto all'import del modulo, e il server MCP e un altro processo che non si
+    # accorge del cambio profilo fatto qui. Sbagliare profilo con una spesa singola e un
+    # fastidio; con un estratto da 400 righe no. Questo tab gira nello stesso processo che ha
+    # appena impostato il profilo.
+    st.subheader("Importa movimenti da file")
+    st.caption(
+        f"Profilo attivo: **{db.get_active_profile()}** — reimportare lo stesso file non "
+        "duplica niente, quindi si puo rilanciare senza paura."
+    )
+    uploaded = st.file_uploader("Estratto conto (CSV)", type=["csv"])
+    col_fmt, col_conto = st.columns(2)
+    fmt = col_fmt.selectbox("Formato", importers.formati())
+    conto = col_conto.text_input("Conto di destinazione", placeholder="es. Conto ING")
+
+    if st.button("Importa", disabled=not (uploaded and conto)):
+        # _header_row e simili leggono il file per path: il buffer di st.file_uploader va
+        # materializzato su disco prima di passarlo ai parser.
+        tmp = Path(tempfile.mkdtemp()) / uploaded.name
+        tmp.write_bytes(uploaded.getbuffer())
+        try:
+            report = importers.import_file(tmp, fmt, conto.strip())
+        except Exception as e:
+            st.error(f"Import fallito: {e}")
+        else:
+            st.success(
+                f"Profilo **{report['profilo']}** · conto **{conto.strip()}** — "
+                f"{report['inserite']} inserite, {report['duplicate']} gia presenti, "
+                f"{len(report['scartate'])} scartate"
+            )
+            if report["scartate"]:
+                st.warning("Righe non importate:")
+                st.dataframe(
+                    pd.DataFrame([{**s["riga"], "motivo": s["motivo"]} for s in report["scartate"]]),
+                    use_container_width=True,
+                )

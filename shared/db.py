@@ -1,10 +1,14 @@
 """Schema e CRUD SQLite. Unica fonte di verità, condivisa da mcp_server e dashboard."""
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# FINHUB_DATA_DIR sposta tutti i dati altrove. Serve per puntare un processo separato
+# (il server MCP, avviato da un client) a una cartella di prova: monkeypatchare
+# db.DATA_DIR vale solo dentro il processo che lo fa.
+DATA_DIR = Path(os.environ.get("FINHUB_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
 PROFILES_DIR = DATA_DIR / "profiles"
 ACTIVE_PROFILE_FILE = DATA_DIR / "active_profile.txt"
 DEFAULT_PROFILE = "default"
@@ -69,9 +73,45 @@ def get_connection():
         conn.close()
 
 
+# Le modifiche allo schema vivono qui, non dentro SCHEMA: DB nuovi e DB gia esistenti
+# percorrono la stessa sequenza, quindi non possono divergere. PRAGMA user_version tiene
+# il conto di dove siamo arrivati. Quando la lista diventa lunga, si rigenera SCHEMA da un
+# DB migrato e si azzera.
+MIGRATIONS = [
+    # v1: lega le transazioni a un conto e le rende re-importabili senza duplicati
+    [
+        "ALTER TABLE transactions ADD COLUMN account_id INTEGER REFERENCES cash_accounts(id)",
+        "ALTER TABLE transactions ADD COLUMN dedup_key TEXT",
+        # UNIQUE non si puo aggiungere con ALTER: serve un indice separato.
+        # In SQLite due NULL non collidono in un indice unique, quindi le righe inserite
+        # a mano (dedup_key NULL) restano duplicabili - che e il comportamento giusto.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(dedup_key)",
+    ],
+    # v2: separa il prezzo di mercato dall'override manuale. Finora refresh_etf_quote
+    # scriveva la quotazione live dentro manual_price, cioe nella stessa colonna in cui
+    # l'utente mette a mano il prezzo dei BTP: un refresh sovrascriveva senza avviso un
+    # valore dichiarato a mano, e non c'era modo di sapere ne la fonte ne la data.
+    [
+        "ALTER TABLE holdings ADD COLUMN market_price REAL",
+        "ALTER TABLE holdings ADD COLUMN market_price_at TEXT",
+    ],
+]
+
+
 def init_db():
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= len(MIGRATIONS):
+            return
+        # executescript() committa, e il DDL non apre transazioni implicite: senza questo
+        # BEGIN un ALTER fallito a meta lascerebbe il file mezzo migrato con user_version
+        # ancora indietro, e da li in poi ogni avvio crasherebbe con "duplicate column name".
+        conn.execute("BEGIN")
+        for n, statements in enumerate(MIGRATIONS[version:], start=version + 1):
+            for sql in statements:
+                conn.execute(sql)
+            conn.execute(f"PRAGMA user_version = {n}")  # i PRAGMA non accettano '?'
 
 
 # --- profili (un DB SQLite per profilo) ---
@@ -93,6 +133,29 @@ def set_active_profile(name: str):
     DB_PATH = PROFILES_DIR / f"{name}.db"
     ACTIVE_PROFILE_FILE.write_text(name)
     init_db()
+
+
+@contextmanager
+def profilo(name: str):
+    """Punta il processo a un profilo per la durata del blocco, poi ripristina.
+
+    Diverso da set_active_profile, che cambia il profilo per sempre e riscrive
+    active_profile.txt: qui il cambio e temporaneo e non tocca lo stato su disco, perche
+    serve a un'operazione singola che dichiara su quale profilo vuole agire.
+
+    Il profilo deve gia esistere: crearlo al volo qui vorrebbe dire che un nome digitato
+    male diventa un profilo nuovo e vuoto in cui l'import sparisce senza un errore.
+    """
+    global DB_PATH
+    path = PROFILES_DIR / f"{name}.db"
+    if not path.exists():
+        raise ValueError(f"profilo inesistente: {name!r}. Esistenti: {', '.join(list_profiles())}")
+    precedente = DB_PATH
+    DB_PATH = path
+    try:
+        yield
+    finally:
+        DB_PATH = precedente
 
 
 def _now():
@@ -154,6 +217,17 @@ def list_cash_accounts():
         return [dict(r) for r in conn.execute("SELECT * FROM cash_accounts ORDER BY name").fetchall()]
 
 
+def get_or_create_cash_account(name) -> int:
+    # Volutamente NON upsert_cash_account: quella riscrive il saldo, e un import di
+    # movimenti non sa nulla del saldo. Qui serve solo l'id del conto.
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO cash_accounts (name, balance, updated_at) VALUES (?, 0, ?)",
+            (name, _now()),
+        )
+        return conn.execute("SELECT id FROM cash_accounts WHERE name = ?", (name,)).fetchone()[0]
+
+
 # --- spese/entrate ---
 
 def add_transaction(date, type_, category, amount, description=None):
@@ -171,17 +245,69 @@ def list_transactions(limit=200):
         return [dict(r) for r in rows]
 
 
+def update_transaction(transaction_id, **fields):
+    # Generico come update_holding. Niente updated_at: transactions non ce l'ha.
+    # Serve per correggere una riga sbagliata e per ricategorizzare in blocco.
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    with get_connection() as conn:
+        conn.execute(f"UPDATE transactions SET {cols} WHERE id = ?", (*fields.values(), transaction_id))
+
+
+def delete_transaction(transaction_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+
+
+def add_imported_transactions(rows) -> tuple[int, int]:
+    """rows: tuple (date, type, category, amount, description, account_id, dedup_key).
+    INSERT OR IGNORE sull'indice unique di dedup_key: reimportare lo stesso estratto non
+    duplica niente. Ritorna (inserite, saltate-perche-gia-presenti)."""
+    if not rows:
+        return 0, 0
+    with get_connection() as conn:
+        prima = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO transactions"
+            " (date, type, category, amount, description, account_id, dedup_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        # total_changes e non cursor.rowcount: su executemany con OR IGNORE rowcount non e
+        # affidabile. Il differenziale conta anche i duplicati interni al batch, che e giusto.
+        inserite = conn.total_changes - prima
+    return inserite, len(rows) - inserite
+
+
+# --- prezzi ---
+
+def prezzo_corrente(holding) -> float:
+    """Prezzo da usare per valutare una posizione, in ordine di autorita:
+    manual_price (l'utente lo afferma) > market_price (l'ultima quotazione) > avg_price (il carico).
+
+    Unico posto dove vive questa regola: la usano portfolio_summary, la dashboard e market-data.
+    """
+    for campo in ("manual_price", "market_price", "avg_price"):
+        if holding.get(campo) is not None:
+            return holding[campo]
+    return 0.0
+
+
 # --- riepilogo ---
 
 def portfolio_summary():
-    # Valuta il portafoglio: usa manual_price se set (es. BTP aggiornato), altrimenti avg_price storico
+    # Valuta il portafoglio con prezzo_corrente(): manual_price (quello che dichiara l'utente)
+    # vince su market_price (quello che dice il mercato), che vince su avg_price (il carico).
+    # transactions NON entra qui di proposito: cash_accounts.balance e la fotografia che arriva
+    # dall'estratto e transactions e il registro che arriva dallo stesso estratto. Sommarli
+    # significherebbe contare due volte gli stessi soldi.
     holdings = list_holdings()
     cash = list_cash_accounts()
     invested_value = 0.0
     by_category = {}
     for h in holdings:
-        price = h["manual_price"] if h["manual_price"] is not None else h["avg_price"]
-        value = price * h["quantity"]
+        value = prezzo_corrente(h) * h["quantity"]
         invested_value += value
         by_category[h["category"]] = by_category.get(h["category"], 0.0) + value
     cash_total = sum(c["balance"] for c in cash)
