@@ -95,4 +95,37 @@ try:
 except ValueError as e:
     assert "generico" in str(e), "l'errore deve elencare i formati disponibili"
 
-print("OK: import idempotente, righe identiche conservate, righe rotte scartate")
+
+# --- il tool MCP scrive nel profilo che gli viene dichiarato, non in quello attivo ---
+# E il punto pericoloso del flusso: il server MCP e un processo diverso dalla dashboard
+# e non vede i cambi di profilo fatti li, quindi il profilo va passato e rispettato.
+
+db.DATA_DIR = tmp
+db.PROFILES_DIR = tmp / "profiles"
+db.ACTIVE_PROFILE_FILE = tmp / "active_profile.txt"
+db.set_active_profile("attivo")
+db.set_active_profile("altro")          # "altro" resta il profilo attivo del processo
+
+from mcp_server import server  # noqa: E402
+
+r5 = server.import_transactions_file(str(estratto), "generico", "Conto ING", profilo="attivo")
+assert r5["inserite"] == 4, r5
+assert r5["profilo"] == "attivo", r5
+
+# il profilo attivo del processo non e cambiato e non ha ricevuto niente
+assert db.get_active_profile() == "altro"
+assert db.list_transactions() == [], "l'import e finito nel profilo attivo invece che in quello dichiarato"
+
+with db.profilo("attivo"):
+    assert len(db.list_transactions()) == 4
+
+# un profilo inesistente e un errore, non un profilo nuovo e vuoto in cui l'import sparisce
+try:
+    server.import_transactions_file(str(estratto), "generico", "Conto ING", profilo="mai-visto")
+    raise AssertionError("un profilo inesistente doveva sollevare")
+except ValueError as e:
+    assert "mai-visto" in str(e)
+assert "mai-visto" not in db.list_profiles(), "il profilo inesistente e stato creato lo stesso"
+
+print("OK: import idempotente, righe identiche conservate, righe rotte scartate,")
+print("    e il tool MCP rispetta il profilo dichiarato")

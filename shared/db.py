@@ -135,6 +135,29 @@ def set_active_profile(name: str):
     init_db()
 
 
+@contextmanager
+def profilo(name: str):
+    """Punta il processo a un profilo per la durata del blocco, poi ripristina.
+
+    Diverso da set_active_profile, che cambia il profilo per sempre e riscrive
+    active_profile.txt: qui il cambio e temporaneo e non tocca lo stato su disco, perche
+    serve a un'operazione singola che dichiara su quale profilo vuole agire.
+
+    Il profilo deve gia esistere: crearlo al volo qui vorrebbe dire che un nome digitato
+    male diventa un profilo nuovo e vuoto in cui l'import sparisce senza un errore.
+    """
+    global DB_PATH
+    path = PROFILES_DIR / f"{name}.db"
+    if not path.exists():
+        raise ValueError(f"profilo inesistente: {name!r}. Esistenti: {', '.join(list_profiles())}")
+    precedente = DB_PATH
+    DB_PATH = path
+    try:
+        yield
+    finally:
+        DB_PATH = precedente
+
+
 def _now():
     return datetime.now().isoformat(timespec="seconds")
 

@@ -33,9 +33,9 @@ conferma.
 
 ## 3. Verifica quello che hai dedotto
 
-Il server MCP espone solo `add_transaction` e `list_transactions`: **una transazione sbagliata
-non è cancellabile né correggibile da qui**. Si rimedia a mano, dal dashboard Streamlit o
-direttamente su SQLite.
+Una transazione sbagliata si corregge con `update_transaction` e si cancella con
+`delete_transaction`, ma servono l'`id`: se l'utente se ne accorge fra un mese, ritrovarla in
+mezzo a centinaia di righe importate non è gratis.
 
 Quindi, se hai dedotto un campo che l'utente non ha detto esplicitamente — la categoria, una data
 relativa, il tipo — mettiglielo davanti in una riga e aspetta l'ok. Se ha dichiarato tutto lui,

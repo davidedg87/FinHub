@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mcp.server.mcpserver import MCPServer
-from shared import db, quotes
+from shared import db, importers, quotes
 
 db.init_db()
 mcp = MCPServer("finance-data")
@@ -121,6 +121,48 @@ def add_transaction(date: str, type: str, category: str, amount: float, descript
 def list_transactions(limit: int = 50) -> list[dict]:
     """Elenca le ultime transazioni (spese/entrate), più recenti prima."""
     return db.list_transactions(limit)
+
+
+@mcp.tool()
+def update_transaction(transaction_id: int, category: str | None = None, date: str | None = None,
+                       amount: float | None = None, description: str | None = None) -> str:
+    """Corregge una transazione esistente. Passa solo i campi da cambiare.
+    Serve anche per ricategorizzare quello che un import ha messo in 'da categorizzare'."""
+    campi = {k: v for k, v in
+             {"category": category, "date": date, "amount": amount, "description": description}.items()
+             if v is not None}
+    if not campi:
+        return "nessun campo da aggiornare"
+    db.update_transaction(transaction_id, **campi)
+    return f"transazione {transaction_id} aggiornata: {', '.join(campi)}"
+
+
+@mcp.tool()
+def delete_transaction(transaction_id: int) -> str:
+    """Cancella una transazione. Definitivo: non c'e cestino, chiedi conferma prima."""
+    db.delete_transaction(transaction_id)
+    return f"transazione {transaction_id} cancellata"
+
+
+@mcp.tool()
+def list_import_formats() -> list[str]:
+    """Formati di file che l'import sa leggere (da passare a import_transactions_file)."""
+    return importers.formati()
+
+
+@mcp.tool()
+def import_transactions_file(path: str, formato: str, conto: str, profilo: str) -> dict:
+    """Importa i movimenti di un file in un conto. Idempotente: reimportare lo stesso file
+    non duplica niente. Ritorna quante inserite, quante gia presenti e quali scartate e perche.
+
+    profilo e OBBLIGATORIO e deve gia esistere. Non e una formalita: db.DB_PATH e un global
+    risolto all'import e questo server e un processo diverso dalla dashboard, quindi non vede
+    i cambi di profilo fatti li. Farlo dichiarare a chi chiama e il modo piu corto per non
+    scaricare centinaia di righe nel portafoglio sbagliato, da cui non si torna facilmente
+    indietro. Chiedi conferma all'utente prima di chiamare questo tool.
+    """
+    with db.profilo(profilo):
+        return importers.import_file(path, formato, conto)
 
 
 @mcp.tool()

@@ -25,10 +25,10 @@ punto ha una guida su come portarlo a termine.
 
 | # | Fase 3 — Corsi Anthropic | Status |
 |---|-------------------------|--------|
-| 12 | MCP avanzato: custom server | ❌ |
-| 13 | SubAgent specializzato | ❌ |
-| 14 | Agent skill articolata | ❌ |
-| 15 | Integrazione MCP + SubAgent + Skill | ❌ |
+| 12 | MCP avanzato: custom server | ✅ |
+| 13 | SubAgent specializzato | ✅ |
+| 14 | Agent skill articolata | ✅ |
+| 15 | Integrazione MCP + SubAgent + Skill | ✅ |
 
 **Legenda:** ✅ completato | ❌ da fare
 
@@ -224,6 +224,18 @@ punto ha una guida su come portarlo a termine.
   le operazioni suggerite.
 - Questo è il punto dove tutte e tre le architetture (MCP, subagent,
   skill) lavorano insieme, come descritte nei tre corsi Anthropic.
+
+## Com'e stato realizzato in FinHub
+
+I punti 12-15 sono stati agganciati a bisogni veri del prodotto invece di restare
+esercizi. La traccia originale sopra resta come riferimento del corso.
+
+| # | Traccia del corso | Come e finito in FinHub |
+|---|---|---|
+| 12 | Server `market-data` con resource | `mcp_server/market_data.py` — tool `get_quote` (yfinance per i ticker, scheda MOT di Borsa Italiana per gli ISIN) e resource `market://symbols`. Nasce da un bisogno reale: i prezzi BTP si scrivevano a mano. `tests/test_market_data.py` fa il round-trip vero su stdio. |
+| 13 | Subagent `portfolio-analyzer` | `.claude/agents/portfolio-analyzer.md`, in sola lettura. Usa i tool di `finance-data` e la resource di `market-data`. |
+| 14 | Skill multi-step | `/importa-estratto` invece di `/rebalance-portfolio`: l'import e il flusso centrale di FinHub e ha errori veri da gestire (duplicati, righe illeggibili, profilo sbagliato). |
+| 15 | Integrazione dei tre | La skill importa via MCP, poi propone di delegare al subagent, che legge i prezzi dalla resource dell'altro server. |
 
 ## Rimandato
 

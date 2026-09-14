@@ -49,10 +49,11 @@ Two servers, two domains. `server.py` (**finance-data**) exposes the portfolio �
 `market_data.py` (**market-data**) exposes the market — the world's state, plus the resource `market://symbols`.
 Neither holds state: they always read/write the shared database.
 
-**Tools exposed (14):**
+**finance-data tools (18):**
 - `list_holdings()`, `add_holding()`, `update_holding_price()`, `update_holding_notes()`, `delete_holding()`
 - `list_cash_accounts()`, `set_cash_balance()`
-- `add_transaction()`, `list_transactions()`
+- `add_transaction()`, `list_transactions()`, `update_transaction()`, `delete_transaction()`
+- `list_import_formats()`, `import_transactions_file()` — the latter takes `profilo` as a **required** argument
 - `refresh_etf_quote()`, `portfolio_summary()`
 - `list_profiles()`, `get_active_profile()`, `set_active_profile()`
 
