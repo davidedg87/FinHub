@@ -69,9 +69,37 @@ def get_connection():
         conn.close()
 
 
+# Le modifiche allo schema vivono qui, non dentro SCHEMA: DB nuovi e DB gia esistenti
+# percorrono la stessa sequenza, quindi non possono divergere. PRAGMA user_version tiene
+# il conto di dove siamo arrivati. Quando la lista diventa lunga, si rigenera SCHEMA da un
+# DB migrato e si azzera.
+MIGRATIONS = [
+    # v1: lega le transazioni a un conto e le rende re-importabili senza duplicati
+    [
+        "ALTER TABLE transactions ADD COLUMN account_id INTEGER REFERENCES cash_accounts(id)",
+        "ALTER TABLE transactions ADD COLUMN dedup_key TEXT",
+        # UNIQUE non si puo aggiungere con ALTER: serve un indice separato.
+        # In SQLite due NULL non collidono in un indice unique, quindi le righe inserite
+        # a mano (dedup_key NULL) restano duplicabili - che e il comportamento giusto.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(dedup_key)",
+    ],
+]
+
+
 def init_db():
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= len(MIGRATIONS):
+            return
+        # executescript() committa, e il DDL non apre transazioni implicite: senza questo
+        # BEGIN un ALTER fallito a meta lascerebbe il file mezzo migrato con user_version
+        # ancora indietro, e da li in poi ogni avvio crasherebbe con "duplicate column name".
+        conn.execute("BEGIN")
+        for n, statements in enumerate(MIGRATIONS[version:], start=version + 1):
+            for sql in statements:
+                conn.execute(sql)
+            conn.execute(f"PRAGMA user_version = {n}")  # i PRAGMA non accettano '?'
 
 
 # --- profili (un DB SQLite per profilo) ---
@@ -171,10 +199,28 @@ def list_transactions(limit=200):
         return [dict(r) for r in rows]
 
 
+def update_transaction(transaction_id, **fields):
+    # Generico come update_holding. Niente updated_at: transactions non ce l'ha.
+    # Serve per correggere una riga sbagliata e per ricategorizzare in blocco.
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    with get_connection() as conn:
+        conn.execute(f"UPDATE transactions SET {cols} WHERE id = ?", (*fields.values(), transaction_id))
+
+
+def delete_transaction(transaction_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+
+
 # --- riepilogo ---
 
 def portfolio_summary():
-    # Valuta il portafoglio: usa manual_price se set (es. BTP aggiornato), altrimenti avg_price storico
+    # Valuta il portafoglio: usa manual_price se set (es. BTP aggiornato), altrimenti avg_price storico.
+    # transactions NON entra qui di proposito: cash_accounts.balance e la fotografia che arriva
+    # dall'estratto e transactions e il registro che arriva dallo stesso estratto. Sommarli
+    # significherebbe contare due volte gli stessi soldi.
     holdings = list_holdings()
     cash = list_cash_accounts()
     invested_value = 0.0
